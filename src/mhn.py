@@ -18,8 +18,11 @@ class ModernHopfieldNetwork:
     def add_memory(self, pattern):
         """
         Add a new pattern to memory.
+        Uses Dynamic Gating: Only adds if pattern is sufficiently novel (Similarity < Threshold).
         pattern: (HDC_DIM,) tensor or numpy array
         """
+        from src.config import MEMORY_THRESHOLD
+        
         if not isinstance(pattern, torch.Tensor):
             pattern = torch.from_numpy(pattern).float().to(self.device)
         else:
@@ -29,8 +32,27 @@ class ModernHopfieldNetwork:
         if pattern.dim() == 1:
             pattern = pattern.unsqueeze(0)
             
+        # Dynamic Gating Check
+        if self.memory_matrix.shape[0] > 0:
+            # Check similarity with all existing memories
+            # Sim = X * M^T / (Norms) -- Assuming binary/bipolar normalized vectors
+            # For bipolar {-1, 1}, dot product / D is similarity [-1, 1]
+            # But we are using raw dot product for energy usually.
+            # Let's use Cosine Similarity for robust gating.
+            
+            # Efficient implementation: Dot product
+            similarities = torch.mm(pattern, self.memory_matrix.T) / pattern.shape[1]
+            max_sim = similarities.max().item()
+            
+            if max_sim > MEMORY_THRESHOLD:
+                # Memory exists or is very similar.
+                # Optional: We could update/reinforce the existing memory weights here (Consolidation)
+                # But for now, we just skip to save space.
+                return False
+            
         # Append to memory matrix
         self.memory_matrix = torch.cat([self.memory_matrix, pattern], dim=0)
+        return True
         
     def retrieve(self, query):
         """

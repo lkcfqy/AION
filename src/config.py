@@ -7,6 +7,16 @@ ENV_ID = "MiniGrid-Empty-8x8-v0"
 RENDER_MODE = "rgb_array"
 OBS_SHAPE = (56, 56, 3)  # MiniGrid default 7x7 view * 8px tile = 56x56
 
+# Drone Action Space (6-DOF)
+ACTION_NAMES = {
+    0: "Hover",
+    1: "Forward",
+    2: "Rotate_Left",
+    3: "Rotate_Right",
+    4: "Up",
+    5: "Down"
+}
+
 # Visdom Settings
 VISDOM_SERVER = "http://localhost"
 VISDOM_PORT = 8097
@@ -28,7 +38,9 @@ DT = 0.001             # Simulation step (1ms)
 
 # HDC Settings
 HDC_DIM = 10000        # Hyperdimensional vector size
+HDC_DIM = 10000        # Hyperdimensional vector size
 MHN_BETA = 20.0        # Modern Hopfield Network inverse temperature
+MEMORY_THRESHOLD = 0.9 # Similarity threshold for storing new memories (Dynamic Gating)
 
 # Drive Settings
 LAMBDA_HUNGER = 1.0    # Balance between surprise and hunger
