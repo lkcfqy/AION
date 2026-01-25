@@ -5,10 +5,10 @@ class AIONEnvironment(PyBulletEnv):
     Wrapper for PyBullet Environment to provide standardized inputs.
     Inherits from PyBulletEnv (Phase 1.1).
     """
-    def __init__(self):
+    def __init__(self, headless=False):
         # Initialize PyBulletEnv
-        # User wants to watch -> headless=False
-        super().__init__(headless=False)
+        # headless=True for server deployment, False for local visualization
+        super().__init__(headless=headless)
         
     def step(self, action):
         # PyBulletEnv step returns (obs, reward, done, truncated, info)

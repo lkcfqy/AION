@@ -34,7 +34,7 @@ class RandomProjectionAdapter:
         """
         # Convert input to tensor if needed
         if isinstance(lsm_activity, np.ndarray):
-            x = torch.from_numpy(lsm_activity).float().to(self.device)
+            x = torch.from_numpy(lsm_activity.copy()).float().to(self.device)
         else:
             x = lsm_activity.float().to(self.device)
             

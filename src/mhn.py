@@ -121,3 +121,22 @@ class ModernHopfieldNetwork:
         energy = -torch.logsumexp(self.beta * similarity, dim=-1)
         
         return energy.item()
+
+    def load_memory(self, memory_matrix):
+        """
+        Load memory matrix.
+        
+        Args:
+            memory_matrix: Tensor (N, D)
+        """
+        if not isinstance(memory_matrix, torch.Tensor):
+            # Try to convert if numpy
+            import numpy as np
+            if isinstance(memory_matrix, np.ndarray):
+                memory_matrix = torch.from_numpy(memory_matrix)
+            else:
+                print("Error: memory_matrix must be a tensor or numpy array")
+                return
+
+        self.memory_matrix = memory_matrix.float().to(self.device)
+        print(f"Loaded {self.memory_count} memories into MHN")

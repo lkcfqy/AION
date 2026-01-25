@@ -1,0 +1,7 @@
+numpy
+torch
+pybullet
+opencv-python
+visdom
+nengo
+scipy

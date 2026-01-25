@@ -15,6 +15,7 @@ from src.mhn import ModernHopfieldNetwork
 from src.hrr import HDCWorldModel
 from src.gwt import GlobalWorkspace
 from src.drive import BiologicalDrive
+from src.controller import DroneController
 from src.dashboard import AIONDashboard
 from src.config import HDC_DIM, OBS_SHAPE
 
@@ -44,6 +45,7 @@ class AIONAgent:
         # 3. Controller
         self.gwt = GlobalWorkspace()
         self.drive = BiologicalDrive()
+        self.controller = DroneController()
         
         # 4. Actions (Motor Cortex)
         # Map 0, 1, 2 to HDC vectors
@@ -57,10 +59,6 @@ class AIONAgent:
         }
         from src.config import ACTION_NAMES
         self.action_names = ACTION_NAMES
-        # Correct Action Names for Logging
-        from src.config import ACTION_NAMES
-        self.action_names = ACTION_NAMES 
-        # self.action_names = {0: "Left", 1: "Right", 2: "Fwd"} # OLD WRONG MAPPING
         
         # Dashboard
         # DISABLED FOR HEADLESS DEBUGGING TO AVOID CONNECTION HANGS
@@ -73,6 +71,33 @@ class AIONAgent:
             
         # Episodic Memory (Hippocampus)
         self.episodic_buffer = []
+        
+        # 搜索策略状态 (改进：交替旋转)
+        self.search_direction = 2  # 2=RotL, 3=RotR
+        self.search_steps = 0
+        self.search_timeout = 20  # 每20步切换方向
+        
+        # 危险记忆 (避障)
+        self.danger_memory = []
+        
+        # 加载预训练权重
+        self.load_pretrained_models()
+
+    def load_pretrained_models(self):
+        """加载经过训练的世界模型和记忆"""
+        print("尝试加载预训练模型...")
+        if os.path.exists("pretrained_world_model.pt"):
+            try:
+                checkpoint = torch.load("pretrained_world_model.pt")
+                if 'world_model' in checkpoint:
+                     self.world_model.load_state_dict(checkpoint['world_model'])
+                if 'mhn_memory' in checkpoint:
+                     self.mhn.load_memory(checkpoint['mhn_memory'])
+                print("✅ 成功加载预训练模型 (World Model & MHN)")
+            except Exception as e:
+                print(f"⚠️ 加载模型失败: {e}")
+        else:
+             print("⚠️ 未找到 pretrained_world_model.pt，智能体将作为'新生儿'运行。")
 
     def sleep(self, n_replay=50):
         """
@@ -117,17 +142,75 @@ class AIONAgent:
         hdc_raw = self.adapter.forward(spikes)
         
         return hdc_raw
+    
+    def get_survival_mode(self):
+        """
+        根据电量决定行为模式 (生存驱动核心)
+        
+        Returns:
+            str: "CRITICAL" | "HUNGRY" | "EXPLORE"
+        """
+        if self.drive.battery < 0.1:
+            return "CRITICAL"  # 紧急求生 - 电量<10%
+        elif self.drive.battery < 0.3:
+            return "HUNGRY"    # 饥饿状态 - 电量<30%
+        else:
+            return "EXPLORE"   # 探索状态 - 电量>=30%
+    
+    def detect_goal_visible(self, obs):
+        """
+        通过绿色通道检测目标是否可见，并返回目标位置
+        
+        Args:
+            obs: (56, 56, 3) numpy array, G通道是绿色目标掩码
+        Returns:
+            bool: 目标是否在视野中
+            float: 绿色像素占比
+            str: 目标位置 ("LEFT" / "CENTER" / "RIGHT" / "NONE")
+        """
+        green_channel = obs[:, :, 1]  # G通道是绿色目标掩码
+        total_pixels = obs.shape[0] * obs.shape[1] * 255.0
+        green_ratio = green_channel.sum() / total_pixels
+        
+        # 阈值: 0.5% 的像素是绿色即认为目标可见
+        is_visible = green_ratio > 0.005
+        
+        if not is_visible:
+            return False, green_ratio, "NONE"
+        
+        # 计算目标在图像中的X位置 (用于视觉伺服)
+        # 找到绿色像素的质心X坐标
+        green_mask = green_channel > 50  # 二值化
+        if green_mask.sum() > 0:
+            # 计算绿色区域的X质心
+            cols = np.arange(obs.shape[1])
+            weighted_sum = (green_mask.sum(axis=0) * cols).sum()
+            total_green = green_mask.sum()
+            center_x = weighted_sum / total_green
+            
+            # 图像宽度的1/3为左区，2/3为右区
+            width = obs.shape[1]
+            if center_x < width * 0.35:
+                position = "LEFT"
+            elif center_x > width * 0.65:
+                position = "RIGHT"
+            else:
+                position = "CENTER"
+        else:
+            position = "CENTER"
+            
+        return is_visible, green_ratio, position
 
     def goal_imprinting(self):
         """Hack: Place agent at goal to learn Goal Vector."""
         print("--- PHASE: Goal Imprinting ---")
         print("Teleporting to Goal for fast learning...")
-        # Goal is at (5, 5, 0.5) in PyBulletEnv.
-        # Teleport close to it: (4.5, 5.0, 0.5) to ensure COLLISION
+        # Goal is at (3, 0, 0.5) in PyBulletEnv. 
+        # Teleport close to it: (2, 0, 0.5) to ensure we can reach it quickly
         
         self.env.reset()
         if hasattr(self.env, 'teleport_agent'):
-             self.env.teleport_agent([4.5, 5.0, 0.5])
+             self.env.teleport_agent([2.0, 0.0, 0.5])
         
         # obs, info = self.env.reset(seed=None) # WRONG: This reverts teleport!
         
@@ -164,11 +247,11 @@ class AIONAgent:
                 self.env.reset()
                 self.lsm.reset() # Reset neural state too
 
-    def motor_babbling(self, steps=50):
+    def motor_babbling(self, steps=200):
         """
         Phase 1.5: Motor Babbling (Body Schema Learning).
-        Agent tries random actions to learn the World Model: T(s, a) -> s'
-        Without this, it doesn't know that 'Forward' moves it forward.
+        Agent tries actions to learn the World Model: T(s, a) -> s'
+        改进：增加采样量(200步)，使用轮询确保每个动作均匀采样。
         """
         print(f"--- PHASE: Motor Babbling ({steps} steps) ---")
         print("Learning Action-Consequence mappings...")
@@ -181,37 +264,37 @@ class AIONAgent:
         prev_concept = self.perceive(obs)
         
         for t in range(steps):
-            # Random Action
-            action_int = random.choice([0, 1, 2, 3, 4, 5]) 
+            # 改进：轮询而非随机，确保每个动作均匀学习
+            action_int = t % 6
             action_hdc = self.action_vectors[action_int]
             
             # Execute
-            obs, reward, _, _, _ = self.env.step(action_int)
+            # obs, reward, _, _, _ = self.env.step(action_int)
+            smooth_vel = self.controller.step(action_int)
+            obs, reward, _, _, _ = self.env.step(smooth_vel)
             if self.dashboard: self.dashboard.update_env_view(obs)
             
             # Learn
             current_concept = self.perceive(obs)
             
-            # WM Update: s + a -> s'
-            self.world_model.learn(prev_concept, action_hdc, current_concept)
+            # WM Update: s + a -> s' (使用action_int直接传递)
+            self.world_model.learn(prev_concept, action_int, current_concept)
             
             prev_concept = current_concept
             
-            if t % 10 == 0:
-                print(f"Babbling Step {t}/{steps}: Trying {self.action_names.get(action_int, str(action_int))}")
+            if t % 20 == 0:
+                print(f"Babbling Step {t}/{steps}: Action={self.action_names.get(action_int, str(action_int))}")
                 
-        print("Body Schema Learned.")
+        print(f"Body Schema Learned. Transition counts: {self.world_model.counts}")
         
     def reset_for_mission(self):
         """Reset everything for the real run."""
         print("Resetting for Active Inference Survival Run...")
         self.env.reset()
         self.lsm.reset()
-        self.env.reset()
-        self.lsm.reset()
+        self.controller.reset()
         # Start with Low Battery to trigger Homing Behavior immediately (Demo Mode)
-        self.drive.battery = 0.3 
-        # self.drive.step(got_food=True) # Full battery = Exploration
+        self.drive.battery = 0.3
 
     def run_active_inference(self, max_steps=1000):
         print("--- PHASE: Active Inference Loop ---")
@@ -280,71 +363,135 @@ class AIONAgent:
             # 2. Learning (World Model)
             # T(S_prev, A_prev) -> S_curr
             if prev_concept is not None:
-                self.world_model.learn(prev_concept, prev_action_hdc, current_concept)
+                self.world_model.learn(prev_concept, prev_action_int, current_concept)
                 
-            # 3. Drive Check
-            # Check if we accidentally accomplished goal
+            # 3. 生存驱动决策系统
+            mode = self.get_survival_mode()
+            goal_visible, green_ratio, goal_position = self.detect_goal_visible(obs)
             goal_delta = self.gwt.compute_goal_delta()
             
-            # 4. Planning / Action Selection
-            best_action_int = None
-            min_expected_energy = float('inf')
+            # 4. Planning / Action Selection (基于生存模式)
+            best_action_int = 0  # 默认: Hover
+            pred_concept = current_concept
             
-            # Check if Goal is currently visible (approx)
-            # We compare current concept with goal concept
-            current_dist_to_goal = hamming_dist(current_concept, self.gwt.current_goal)
-            
-            # HEURISTIC: Visual Search Strategy
-            # If we are very far from goal (Hamming Dist > 0.3), it means we don't see it.
-            # Local gradient descent (Active Inference) fails here because "Empty Space A" is not closer to "Green Box" than "Empty Space B".
-            # We must Rotate to find it.
-            if current_dist_to_goal > 0.35:
-                # Search Mode: Rotate Left
-                # FORCE PURE ROTATION to ensure effect
-                best_action_int = 2 # Rotate Left
-                
-                print(f"SEARCHING: Dist {current_dist_to_goal:.3f} > 0.35 -> ROTATING LEFT")
-                
-                pred_concept = current_concept 
-            else:
-                print(f"HOMING: Dist {current_dist_to_goal:.3f} -> Active Inference")
-                # Goal is in sight! Use Active Inference to servo towards it.
-                for a_int in [0, 1, 2, 3, 4, 5]: 
-                    a_hdc = self.action_vectors[a_int]
+            if mode == "CRITICAL":
+                # ═══════════════════════════════════════════════
+                # 紧急求生模式 (电量<10%)
+                # 策略: 视觉伺服 - 对准目标再冲刺
+                # ═══════════════════════════════════════════════
+                if goal_visible:
+                    # 目标可见 → 视觉伺服导航
+                    if goal_position == "LEFT":
+                        best_action_int = 2  # RotL - 向左转对准目标
+                        print(f"🔴 CRITICAL | Goal on LEFT (green={green_ratio:.4f}) → RotL to center")
+                    elif goal_position == "RIGHT":
+                        best_action_int = 3  # RotR - 向右转对准目标
+                        print(f"🔴 CRITICAL | Goal on RIGHT (green={green_ratio:.4f}) → RotR to center")
+                    else:  # CENTER
+                        best_action_int = 1  # Forward - 目标居中，全速前进
+                        print(f"🔴 CRITICAL | Goal CENTERED (green={green_ratio:.4f}) → SPRINT!")
+                else:
+                    # 搜索策略: 旋转5步 → 前进3步
+                    self.search_steps += 1
+                    cycle_pos = self.search_steps % 8
                     
-                    # Predict Outcome
-                    # Pred = WM(Sense, Action)
-                    pred_raw = self.world_model.predict(current_concept, a_hdc)
-                    
-                    # Cleanup Prediction using MHN (Recall known concepts)
-                    if self.mhn.memory_count > 0:
-                        pred_clean = self.mhn.retrieve(pred_raw)
+                    if cycle_pos < 5:
+                        best_action_int = self.search_direction
+                        print(f"🔴 CRITICAL | SCANNING (green={green_ratio:.4f}) → {'RotL' if best_action_int == 2 else 'RotR'}")
                     else:
-                        pred_clean = pred_raw
-                        
-                    # Calculate Expected Cost (Distance to Goal)
-                    # We utilize the GWT's helper, but need to pass vectors manually
-                    dist = hamming_dist(pred_clean, self.gwt.current_goal)
+                        best_action_int = 1
+                        print(f"🔴 CRITICAL | EXPLORING (green={green_ratio:.4f}) → Forward")
                     
-                    # Cost = GoalDist (Greedy)
-                    if dist < min_expected_energy:
-                        min_expected_energy = dist
-                        best_action_int = a_int
-                        pred_concept = pred_clean # Store for visualization
+                    if self.search_steps % 16 == 0:
+                        self.search_direction = 3 if self.search_direction == 2 else 2
+                    
+            elif mode == "HUNGRY":
+                # ═══════════════════════════════════════════════
+                # 饥饿模式 (电量10%-30%)
+                # 策略: 视觉伺服导航 (简化版Active Inference)
+                # ═══════════════════════════════════════════════
+                if goal_visible:
+                    # 目标可见 → 视觉伺服导航
+                    if goal_position == "LEFT":
+                        best_action_int = 2  # RotL
+                        print(f"🟡 HUNGRY | Goal on LEFT (green={green_ratio:.4f}) → RotL")
+                    elif goal_position == "RIGHT":
+                        best_action_int = 3  # RotR
+                        print(f"🟡 HUNGRY | Goal on RIGHT (green={green_ratio:.4f}) → RotR")
+                    else:  # CENTER
+                        best_action_int = 1  # Forward
+                        print(f"🟡 HUNGRY | Goal CENTERED (green={green_ratio:.4f}) → Forward")
+                else:
+                    # 目标不可见 → 旋转+前进交替搜索
+                    self.search_steps += 1
+                    cycle_pos = self.search_steps % 10
+                    
+                    if cycle_pos < 6:
+                        best_action_int = self.search_direction
+                        print(f"🟡 HUNGRY | SCANNING (green={green_ratio:.4f}) → {'RotL' if best_action_int == 2 else 'RotR'}")
+                    else:
+                        best_action_int = 1
+                        print(f"🟡 HUNGRY | EXPLORING (green={green_ratio:.4f}) → Forward")
+                    
+                    if self.search_steps % 20 == 0:
+                        self.search_direction = 3 if self.search_direction == 2 else 2
+                    
+            else:  # EXPLORE
+                # ═══════════════════════════════════════════════
+                # 探索模式 (电量>=30%)
+                # 策略: 主动推理 (Active Inference)
+                # 1. 想象所有可能的动作结果 (World Model)
+                # 2. 计算预期自由能 G (Expected Free Energy)
+                # 3. 选择 G 最小的动作 (最大化效用/最小化目标距离)
+                # ═══════════════════════════════════════════════
+                
+                # print(f"🟢 EXPLORE | Active Inference Planning...")
+                best_G = float('inf')
+                best_action_int = 0 # Default Hover
+                
+                # 简单的 1-step Lookahead
+                for a in range(6): # Try all 6 actions
+                    # 1. 想象: s_next = T(s_curr, a)
+                    imagined_concept = self.world_model.predict(current_concept, a)
+                    
+                    # 2. 评估: G ≈ -Utility (Goal Delta) - InfoGain + Cost
+                    # 简化: G = DistanceToGoal + ActionCost
+                    # 我们希望 Distance 最小
+                    
+                    dist_to_goal = self.gwt._hamming_dist(imagined_concept, self.gwt.current_goal)
+                    
+                    # Action Cost (Energy efficiency)
+                    # Hover(0) is cheapest, Up(4) is expensive?
+                    cost = 0.0
+                    if a == 0: cost = 0.0
+                    elif a == 4: cost = 0.05
+                    else: cost = 0.01
+                    
+                    G = dist_to_goal + cost
+                    
+                    if G < best_G:
+                        best_G = G
+                        best_action_int = a
+                
+                # 添加一点随机性以防死循环 (Softmax 策略会更好，这里用 Epsilon-Greedy)
+                if random.random() < 0.1:
+                    best_action_int = random.randint(0, 5)
+                    # print("  (Random Exploration)")
+                
+                # print(f"🟢 EXPLORE | Best Action: {self.action_names.get(best_action_int)} (G={best_G:.4f})")
             
             # 5. Execute
-            obs, reward, done, truncated, info = self.env.step(best_action_int)
+            # obs, reward, done, truncated, info = self.env.step(best_action_int)
+            smooth_vel = self.controller.step(best_action_int)
+            obs, reward, done, truncated, info = self.env.step(smooth_vel)
             
             # CRASH REFLEX LOGIC
-            # If Isaac Sim returns info['crash'] = True
             is_crash = info.get('crash', False)
             if is_crash:
-                # PAIN SIGNAL!
-                # Huge Negative Dopamine to suppress this synapse
+                # PAIN SIGNAL + 存储危险记忆
                 dopamine = -1.0 
-                # Reset Env but keep learning? Or just respawn?
-                # Usually step() handles respawn on crash if configured.
-                print("CRASH DETECTED! Pain Signal Sent.")
+                self.danger_memory.append(current_concept.clone())
+                print(f"CRASH DETECTED! Danger memory size: {len(self.danger_memory)}")
             
             # 6. Update Drive & GWT
             # Station Keeping / Charging logic: if reward > 0 (at charger), battery fills
@@ -397,7 +544,8 @@ class AIONAgent:
             self.episodic_buffer.append((obs, dopamine))
             
             if done:
-                print("Goal Reached! (Food Eaten).")
+                print("🌟 Goal Reached! (Charging Station Docked)")
+                print(f"   Battery recharged: {self.drive.battery:.2f} -> 1.00")
                 
                 # Trigger Sleep Consolidation
                 self.sleep(n_replay=200)
@@ -406,9 +554,13 @@ class AIONAgent:
                 self.env.reset()
                 self.lsm.reset()
                 prev_concept = None 
-                # Reset F baseline?
-                # avg_free_energy = 0.5
                 if truncated: break
+            
+            # 💀 电量耗尽 = 死亡
+            if self.drive.battery <= 0:
+                print("💀 DEATH: Battery depleted! Agent crashed.")
+                print(f"   Survived {t} steps.")
+                break
 
 def main():
     print("DEBUG: Script Started", flush=True)
@@ -417,8 +569,8 @@ def main():
     # 1. Imprint Goal
     agent.goal_imprinting()
     
-    # 2. Learn Body Schema (Warmup)
-    agent.motor_babbling(steps=60)
+    # 2. Learn Body Schema (Warmup) - 增加采样量
+    agent.motor_babbling(steps=200)
     
     # 3. Setup Mission
     agent.reset_for_mission()

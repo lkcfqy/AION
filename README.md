@@ -1,212 +1,63 @@
-# AION: Bio-Inspired Autonomous Intelligence for Drones
+# AION: Active Inference Online Network
 
-## 项目概述
+AION 是一个基于主动推理（Active Inference）和仿生神经网络（LSM, MHN）的智能体控制系统。本项目模拟了一个四旋翼无人机在 3D 环境中的生存与探索任务。
 
-**AION (Autonomous Intelligence ONtology)** 是一个基于仿生认知架构的自主无人机智能系统。该项目融合了多种认知神经科学理论，构建了一个完整的端到端感知-思考-行动闭环系统，使无人机能够通过 **Active Inference（主动推理）** 框架实现自主导航和生存行为。
+## 核心特性
 
-### 核心特性
+- **液态状态机 (LSM)**: 具有稳态可塑性的脉冲神经网络，用于处理视觉输入。
+- **现代 Hopfield 网络 (MHN)**: 用于情景记忆和概念存储。
+- **超维计算 (HDC)**: 用于认知建模和因果推理。
+- **主动推理 (Active Inference)**: 基于自由能最小化的行为决策机制。
+- **生存驱动**: 基于“饥饿”和“电量”的生物驱动系统。
 
-- 🧠 **液态状态机 (LSM)** - 生物神经网络感知处理，支持自稳态可塑性
-- 🔮 **超维计算 (HDC)** - 高维二值向量表示，实现概念符号化
-- 🌍 **Holographic Reduced Representation (HRR)** - 因果世界模型学习
-- 💾 **现代Hopfield网络** - 高容量联想记忆，支持动态门控
-- 🎯 **全局工作空间理论 (GWT)** - 认知整合与冲突监控
-- ⚡ **生物驱动系统** - 能量/饥饿动机调节
-- 🎮 **PyBullet 物理仿真** - 3D 无人机飞行模拟
+## 环境要求
 
-## 项目结构
+- Python 3.8+
+- PyBullet (物理仿真)
+- Visdom (实时可视化)
 
-```
-AION/
-├── src/                          # 核心源代码
-│   ├── config.py                 # 全局配置参数
-│   ├── environment.py            # 环境抽象层
-│   ├── environment_pybullet.py   # PyBullet 3D物理仿真
-│   ├── environment_isaac.py      # Isaac Sim 支持(实验性)
-│   ├── lsm.py                    # 液态状态机 (Nengo)
-│   ├── adapter.py                # 随机投影适配器 (LSH)
-│   ├── hrr.py                    # HRR 因果世界模型
-│   ├── mhn.py                    # 现代Hopfield网络
-│   ├── gwt.py                    # 全局工作空间
-│   ├── drive.py                  # 生物驱动系统
-│   ├── controller.py             # 运动小脑控制器
-│   └── dashboard.py              # Visdom 可视化仪表盘
-│
-├── scripts/                      # 运行脚本
-│   ├── run_agent.py              # 主智能体运行脚本
-│   ├── mock_mission.py           # 模拟任务测试
-│   ├── verify_*.py               # 各模块单元验证脚本
-│   └── ...
-│
-└── README.md
-```
+## 安装
 
-## 核心模块说明
+1. 克隆代码库：
+   ```bash
+   git clone <repository_url>
+   cd AION
+   ```
 
-### 1. 液态状态机 (LSM) - `lsm.py`
+2. 安装依赖：
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-基于 [Nengo](https://www.nengo.ai/) 实现的脉冲神经网络：
-- **1000个LIF神经元** 构成储层（Reservoir）
-- **稀疏连接**：10% 输入连接 + 10% 循环连接
-- **自稳态可塑性**：根据目标发放率（20Hz）动态调整神经元偏置
-- **三因子学习规则**：支持多巴胺调制的赫布学习
+## 运行指南
 
-### 2. 随机投影适配器 - `adapter.py`
-
-将模拟神经活动转换为超维二值向量：
-- 使用**局部敏感哈希 (LSH)** 保持相似性
-- 输入：1000维连续值 → 输出：10000维二值向量 {-1, +1}
-
-### 3. 超维世界模型 (HRR) - `hrr.py`
-
-学习状态-动作-结果因果关系：
-- **绑定操作**：`T(s, a) → s'` 使用逐元素乘法
-- **置换操作**：保持时序方向性
-- 支持**单次学习**和在线更新
-
-### 4. 现代Hopfield网络 - `mhn.py`
-
-高容量联想记忆：
-- 使用 Softmax 注意力机制实现**指数容量**
-- **动态门控**：仅存储相似度低于阈值的新概念
-- 支持能量函数计算
-
-### 5. 全局工作空间 (GWT) - `gwt.py`
-
-认知整合中枢：
-- 整合感知、预测、目标信息
-- 计算**惊讶度**（预测误差）
-- 计算**目标距离**（动机信号）
-
-### 6. 生物驱动系统 - `drive.py`
-
-内稳态动机调节：
-- **饥饿**：随时间递增，到达目标后重置
-- **电量**：模拟能量消耗
-- **自由能**：`F = Surprise + λ × MetabolicError × GoalDelta`
-
-## 快速开始
-
-### 环境要求
+### 1. 启动可视化服务器
+本项目使用 Visdom 进行实时监控。在运行 Agent 之前，请在一个终端窗口中启动 Visdom 服务器：
 
 ```bash
-Python >= 3.8
-PyTorch >= 1.10
-Nengo >= 3.0
-PyBullet >= 3.2
-OpenCV >= 4.5
-Visdom >= 0.2 (可选，用于可视化)
-```
-
-### 安装依赖
-
-```bash
-pip install torch nengo pybullet opencv-python numpy scipy
-pip install visdom  # 可选
-```
-
-### 运行主程序
-
-```bash
-# 1. (可选) 启动 Visdom 服务器
 python -m visdom.server
+```
+*访问 http://localhost:8097 查看仪表盘。*
 
-# 2. 运行智能体
-cd AION
+### 2. 运行 Agent
+在另一个终端窗口中启动主程序：
+
+```bash
 python scripts/run_agent.py
 ```
 
-### 运行单元测试
+## 文件结构
 
-```bash
-# 验证 LSM 模块
-python scripts/verify_lsm.py
+- `src/`: 核心源代码
+  - `lsm.py`: 液态状态机实现
+  - `mhn.py`: Hopfield 网络记忆系统
+  - `environment_pybullet.py`: PyBullet 仿真环境包装器
+  - `dashboard.py`: Visdom 可视化控制
+- `scripts/`: 运行脚本
+  - `run_agent.py`: Agent 主入口程序
 
-# 验证 PyBullet 环境
-python scripts/verify_pybullet.py
-
-# 验证所有模块
-python scripts/verify_setup.py
-```
-
-## 工作流程
-
-### 1. 目标印记 (Goal Imprinting)
-
-智能体首先被传送到目标位置附近，学习目标的视觉表征：
-```
-Teleport → Observe Goal → Encode to HDC → Store in GWT
-```
-
-### 2. 运动探索 (Motor Babbling)
-
-通过随机动作学习身体图式（因果世界模型）：
-```
-For each random action:
-    Observe s → Execute a → Observe s'
-    Learn T(s, a) → s' in HRR
-```
-
-### 3. 主动推理循环 (Active Inference)
-
-基于自由能最小化的自主决策：
-```
-1. Perceive: obs → LSM → Adapter → HDC concept
-2. Predict: for each action, WM.predict(s, a) → s'
-3. Evaluate: F(s') = Surprise + Drive × GoalDelta
-4. Select: argmin(F)
-5. Execute: env.step(action)
-6. Learn: Update WM, MHN, LSM weights
-```
-
-### 4. 睡眠巩固 (Sleep Consolidation)
-
-到达目标后进行经验回放：
-```
-Shuffle episodic memories
-Replay with dopamine modulation
-Consolidate LSM weights
-```
-
-## 配置参数
-
-主要参数在 `src/config.py` 中定义：
-
-| 参数 | 默认值 | 描述 |
-|------|--------|------|
-| `LSM_N_NEURONS` | 1000 | LSM 神经元数量 |
-| `LSM_SPARSITY` | 0.1 | 循环连接稀疏度 |
-| `HDC_DIM` | 10000 | 超维向量维度 |
-| `MHN_BETA` | 20.0 | Hopfield网络逆温度 |
-| `MEMORY_THRESHOLD` | 0.9 | 记忆门控相似度阈值 |
-| `TARGET_FIRING_RATE` | 20 Hz | LSM目标发放率 |
-| `LAMBDA_HUNGER` | 1.0 | 驱动权重系数 |
-
-## 可视化
-
-启动 Visdom 服务器后，访问 `http://localhost:8097` 查看实时仪表盘：
-
-- **环境视图**：第一人称摄像头画面
-- **LSM光栅图**：神经元发放活动
-- **能量景观**：Hopfield网络能量变化
-- **生存指标**：自由能、饥饿度、电量
-
-## 理论基础
-
-本项目基于以下神经科学和认知科学理论：
-
-1. **Active Inference** (Friston, 2010) - 自由能最小化框架
-2. **Liquid State Machine** (Maass et al., 2002) - 储层计算
-3. **Hyperdimensional Computing** (Kanerva, 2009) - 认知符号表示
-4. **Modern Hopfield Networks** (Ramsauer et al., 2020) - 注意力机制记忆
-5. **Global Workspace Theory** (Baars, 1988) - 意识整合理论
-
-## 许可证
-
-MIT License
-
-## 致谢
-
-- [Nengo](https://www.nengo.ai/) - 神经网络仿真框架
-- [PyBullet](https://pybullet.org/) - 物理引擎
-- [Visdom](https://github.com/fossasia/visdom) - 可视化工具
+## 交互控制
+Agent 将自动运行，经历以下阶段：
+1. **Goal Imprinting**: 快速定位并学习目标特征。
+2. **Motor Babbling**: 随机运动以学习身体图式（动作-结果映射）。
+3. **Active Inference Survival**: 正式生存任务，寻找能量源并避免撞击。

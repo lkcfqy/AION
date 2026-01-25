@@ -7,6 +7,14 @@ ENV_ID = "MiniGrid-Empty-8x8-v0"
 RENDER_MODE = "rgb_array"
 OBS_SHAPE = (56, 56, 3)  # MiniGrid default 7x7 view * 8px tile = 56x56
 
+# PATHS
+import os
+import pybullet_data
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Assuming assets are in the root directory for now, based on previous loadURDF calls using relative paths.
+# If they are just in the current running dir (previous behavior), we should point to PROJECT_ROOT.
+ASSET_PATH = PROJECT_ROOT 
+
 # Drone Action Space (6-DOF)
 ACTION_NAMES = {
     0: "Hover",
@@ -26,7 +34,7 @@ VISDOM_ENV = "AION_Dashboard"
 SEED = 42
 
 # LSM (Liquid State Machine) Settings
-LSM_N_NEURONS = 1000
+LSM_N_NEURONS = 400
 LSM_SPARSITY = 0.1     # 10% recurrent connectivity
 LSM_IN_SPARSITY = 0.1  # 10% input connectivity (to handle 12k inputs)
 TARGET_FIRING_RATE = 20 # Hz (Target rate for homeostasis)
@@ -37,7 +45,6 @@ TAU_REF = 0.002        # Refractory period (2ms)
 DT = 0.001             # Simulation step (1ms)
 
 # HDC Settings
-HDC_DIM = 10000        # Hyperdimensional vector size
 HDC_DIM = 10000        # Hyperdimensional vector size
 MHN_BETA = 20.0        # Modern Hopfield Network inverse temperature
 MEMORY_THRESHOLD = 0.9 # Similarity threshold for storing new memories (Dynamic Gating)

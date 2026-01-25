@@ -8,8 +8,10 @@ from src.config import (
 
 class AdaptiveLSM:
     """
-    Liquid State Machine (LSM) with Homeostatic Plasticity.
-    Task 1.1
+    Liquid State Machine (LSM) with Homeostatic Plasticity - Base Implementation.
+    
+    Note: This is the base/prototype class. For production use with dynamic input
+    and 3-factor learning, use AION_LSM_Network which extends this class.
     """
     def __init__(self):
         self.dt = DT
@@ -166,8 +168,15 @@ class AdaptiveLSM:
         # Ideally, we redesign __init__ to use a function for the input node.
         pass
 
-# Redefining class to fix input handling
-class AION_LSM_Network(AdaptiveLSM):
+# Production-ready LSM with dynamic input and online learning support
+class AION_LSM_Network:
+    """
+    Production Liquid State Machine with:
+    - Dynamic input callback (lambda-based Node)
+    - 3-factor Hebbian learning (dopamine modulation)
+    - Sparse weight generation via scipy.sparse
+    - Runtime weight modification support
+    """
     def __init__(self):
         self.current_input = np.zeros(np.prod(OBS_SHAPE))
         

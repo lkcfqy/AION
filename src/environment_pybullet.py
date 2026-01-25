@@ -4,7 +4,8 @@ import pybullet as p
 import pybullet_data
 import time
 import math
-from src.config import OBS_SHAPE, RENDER_MODE
+from src.config import OBS_SHAPE, RENDER_MODE, ASSET_PATH
+import os
 
 class PyBulletEnv:
     """
@@ -55,17 +56,26 @@ class PyBulletEnv:
         # Or use R2D2 as placeholder? Let's use a Cube for simplicity and attach a camera.
         startPos = [0, 0, 1]
         startOrientation = p.getQuaternionFromEuler([0, 0, 0])
-        self.robotId = p.loadURDF("cube.urdf", startPos, startOrientation, globalScaling=0.5)
+        # Try to load from ASSET_PATH, check existence first to avoid warnings
+        cube_path = os.path.join(ASSET_PATH, "cube.urdf")
+        if os.path.exists(cube_path):
+             self.robotId = p.loadURDF(cube_path, startPos, startOrientation, globalScaling=0.5)
+        else:
+             # Fallback to pybullet_data/cube.urdf (default)
+             self.robotId = p.loadURDF("cube.urdf", startPos, startOrientation, globalScaling=0.5)
         
         # Load Goal (Green colored object)
-        # Use Sphere so Bio-Retina (Edge Detection) can distinguish it from Obstacles (Cubes)
-        # "sphere2.urdf" is standard in pybullet_data
-        self.goalId = p.loadURDF("sphere2.urdf", [5, 5, 0.5], p.getQuaternionFromEuler([0,0,0]), globalScaling=0.5)
+        sphere_path = os.path.join(ASSET_PATH, "sphere2.urdf")
+        if os.path.exists(sphere_path):
+            self.goalId = p.loadURDF(sphere_path, [3, 0, 0.5], p.getQuaternionFromEuler([0,0,0]), globalScaling=0.8)
+        else:
+            self.goalId = p.loadURDF("sphere2.urdf", [3, 0, 0.5], p.getQuaternionFromEuler([0,0,0]), globalScaling=0.8)
+
+        p.changeVisualShape(self.goalId, -1, rgbaColor=[0, 1, 0, 1]) # Green
         p.changeVisualShape(self.goalId, -1, rgbaColor=[0, 1, 0, 1]) # Green
         
-        # Add obstacle
-        # Move it aside so it doesn't block the Goal (5,5) from Start (0,0)
-        self.obsId = p.loadURDF("cube.urdf", [3, 0, 0.5], p.getQuaternionFromEuler([0,0,0]))
+        # Add obstacle (放到侧面，不挡目标)
+        self.obsId = p.loadURDF("cube.urdf", [2, 2, 0.5], p.getQuaternionFromEuler([0,0,0]))
         p.changeVisualShape(self.obsId, -1, rgbaColor=[1, 0, 0, 1]) # Red
         
         # Dynamics
@@ -75,11 +85,11 @@ class PyBulletEnv:
         # Initial Observation
         return self._get_observation(), {}
 
-    def step(self, action_id):
+    def step(self, action):
         """
         Apply action and step simulation.
-        Action Map (6-DOF):
-        0: Hover, 1: Fwd, 2: RotL, 3: RotR, 4: Up, 5: Down
+        Args:
+            action: int ID (0-5) OR np.array([vx, vy, vz, yaw_rate])
         """
         # 1. Decode Action to Velocity Command
         speed = 1.0
@@ -87,17 +97,38 @@ class PyBulletEnv:
         target_vel = np.array([0.0, 0.0, 0.0])
         yaw_rate = 0.0
         
-        if action_id == 1:   # Forward (Relative to Yaw)
-             target_vel[0] = math.cos(self.yaw) * speed
-             target_vel[1] = math.sin(self.yaw) * speed
-        elif action_id == 2: # RotL
-             yaw_rate = rot_speed
-        elif action_id == 3: # RotR
-             yaw_rate = -rot_speed
-        elif action_id == 4: # Up
-             target_vel[2] = 0.5
-        elif action_id == 5: # Down
-             target_vel[2] = -0.5
+        if isinstance(action, int) or isinstance(action, np.int64) or isinstance(action, float):
+             action_id = int(action)
+             if action_id == 1:   # Forward (Relative to Yaw)
+                  target_vel[0] = math.cos(self.yaw) * speed
+                  target_vel[1] = math.sin(self.yaw) * speed
+             elif action_id == 2: # RotL
+                  yaw_rate = rot_speed
+             elif action_id == 3: # RotR
+                  yaw_rate = -rot_speed
+             elif action_id == 4: # Up
+                  target_vel[2] = 0.5
+             elif action_id == 5: # Down
+                  target_vel[2] = -0.5
+        elif isinstance(action, np.ndarray):
+             # Controller Input: direct velocity vector [vx, vy, vz, yaw_rate]
+             # Assuming input is in BODY frame (Forward is X), we need to rotate it to WORLD frame if it's not already?
+             # Controller output is typically Body Frame for drones.
+             # [0.5, 0, 0] -> Forward.
+             # We need to rotate linear part by Yaw.
+             
+             body_vel = action[:3]
+             w_z = action[3]
+             
+             # Rotate body_vel to world_vel by Yaw
+             c, s = math.cos(self.yaw), math.sin(self.yaw)
+             R_z = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+             world_vel = R_z.dot(body_vel)
+             
+             target_vel = world_vel
+             yaw_rate = w_z
+        else:
+             print(f"Warning: Unknown action type {type(action)}")
              
         # 2. Apply Velocity (Kinematic Control for stability)
         # Update Yaw
@@ -141,12 +172,18 @@ class PyBulletEnv:
         
         return obs, reward, done, False, info
         
-    def teleport_agent(self, pos):
+    def teleport_agent(self, pos, yaw=0.0):
         """
-        Teleport agent to specific position (x, y, z).
-        Used for Goal Imprinting phase.
+        Teleport agent to specific position (x, y, z) and yaw.
         """
-        p.resetBasePositionAndOrientation(self.robotId, pos, [0,0,0,1])
+        self.yaw = yaw
+        quat = p.getQuaternionFromEuler([0, 0, yaw])
+        p.resetBasePositionAndOrientation(self.robotId, pos, quat)
+
+    def get_pos(self):
+        """Return agent's current [x, y, z] position."""
+        pos, _ = p.getBasePositionAndOrientation(self.robotId)
+        return list(pos)
         
     def _get_observation(self):
         """
@@ -188,19 +225,40 @@ class PyBulletEnv:
 
     def _process_visuals(self, raw_img):
         """
-        Bio-Retina Pipeline:
-        HD RGB -> Grayscale -> Edge Detection -> Resize
-        """
-        # 1. Grayscale
-        gray = cv2.cvtColor(raw_img, cv2.COLOR_RGB2GRAY)
+        Bio-Retina Pipeline (改进版):
+        HD RGB -> 边缘 + 颜色分离 -> 多通道输出
         
-        # 2. Edge Detection (Canny)
+        输出:
+        - R通道: 边缘检测 (形状感知)
+        - G通道: 绿色目标掩码 (目标识别)
+        - B通道: 红色障碍掩码 (危险识别)
+        """
+        # 1. 边缘检测
+        gray = cv2.cvtColor(raw_img, cv2.COLOR_RGB2GRAY)
         edges = cv2.Canny(gray, 100, 200)
         
+        # 2. 颜色分离 (HSV空间)
+        hsv = cv2.cvtColor(raw_img, cv2.COLOR_RGB2HSV)
+        
+        # 绿色掩码 (目标 - Goal)
+        lower_green = np.array([35, 50, 50])
+        upper_green = np.array([85, 255, 255])
+        green_mask = cv2.inRange(hsv, lower_green, upper_green)
+        
+        # 红色掩码 (障碍物 - Obstacle)
+        lower_red1 = np.array([0, 50, 50])
+        upper_red1 = np.array([10, 255, 255])
+        lower_red2 = np.array([170, 50, 50])
+        upper_red2 = np.array([180, 255, 255])
+        red_mask = cv2.inRange(hsv, lower_red1, upper_red1) | cv2.inRange(hsv, lower_red2, upper_red2)
+        
         # 3. Resize to OBS_SHAPE (56, 56)
-        resized = cv2.resize(edges, (OBS_SHAPE[0], OBS_SHAPE[1]))
+        resized_edges = cv2.resize(edges, (OBS_SHAPE[0], OBS_SHAPE[1]))
+        resized_green = cv2.resize(green_mask, (OBS_SHAPE[0], OBS_SHAPE[1]))
+        resized_red = cv2.resize(red_mask, (OBS_SHAPE[0], OBS_SHAPE[1]))
         
-        # 4. Return as 3-channel for compatibility
-        obs = cv2.cvtColor(resized, cv2.COLOR_GRAY2RGB)
+        # 4. 合并为3通道: [边缘, 绿色目标, 红色障碍]
+        obs = np.stack([resized_edges, resized_green, resized_red], axis=-1)
         
-        return obs
+        return obs.astype(np.uint8)
+
