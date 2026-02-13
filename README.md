@@ -25,9 +25,9 @@ Make sure you have the following dependencies installed:
 ## 🚀 Installation Guide 🔧
 
 1. **Clone the repository**:
-   ```bash
-   git clone <repository_url>
-   cd AION
+```bash
+git clone <repository_url>
+cd AION
 
 ```
 
